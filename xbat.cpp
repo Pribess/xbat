@@ -81,6 +81,10 @@ int main(int argc, char *argv[]) {
 	Window root = XDefaultRootWindow(display);
 	Window window = XCreateSimpleWindow(display, root, X, Y, HEIGHT, WIDTH, 0, WhitePixel(display, 0), background);
 
+	XSetWindowAttributes attribute;
+	attribute.override_redirect = true;
+	XChangeWindowAttributes(display, window, CWOverrideRedirect, &attribute);
+
 	XMapWindow(display, window);
 
 
