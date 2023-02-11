@@ -1,4 +1,3 @@
-#include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 
@@ -195,7 +194,7 @@ int main(int argc, char *argv[]) {
 		}
 	});
 
-	XSelectInput(display, window, ExposureMask | ResizeRedirectMask | PointerMotionMask | ButtonPressMask | ButtonReleaseMask);
+	XSelectInput(display, window, ExposureMask | ResizeRedirectMask | PointerMotionMask | ButtonPressMask | ButtonReleaseMask | KeyPressMask | KeyReleaseMask);
 	XEvent event;
 
 	Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", true);
@@ -204,6 +203,8 @@ int main(int argc, char *argv[]) {
 	bool clicked = false;
 	XWindowAttributes window_attribute;
 	XButtonEvent pointerstate;
+
+	unsigned int previous;
 
 	bool running = true;
 	while (running) {
@@ -237,9 +238,21 @@ int main(int argc, char *argv[]) {
 				}
 				break;
 
+			case KeyPress:
+				if (previous == XKeysymToKeycode(display, XK_Control_L) && event.xbutton.button == XKeysymToKeycode(display, XK_c)) {
+					running = false;
+				}
+				previous = event.xbutton.button;
+				break;
+
+			case KeyRelease:
+				previous = 0;
+				break;
+
 			case ClientMessage:
 				running = false;
 				break;
+
 			default:
 				break;
 		}
