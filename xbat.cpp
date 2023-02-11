@@ -1,5 +1,6 @@
 #include <X11/X.h>
 #include <X11/Xlib.h>
+#include <X11/keysym.h>
 
 #include <libudev.h>
 #include <fcntl.h>
@@ -8,6 +9,8 @@
 
 #include <iostream>
 #include <fstream>
+#include <thread>
+#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -119,69 +122,126 @@ int main(int argc, char *argv[]) {
 	std::getline(capacity, capacity_str);
 	capacity.seekg(0);
 
-	draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
+		draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
 
-	struct udev *udev;
-	if (!(udev = udev_new())) {
-		std::cerr << "xbat: Failed to create udev context object" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
+	std::mutex mtx;
 
-	const char *syspath = "/sys/class/power_supply/BAT1";
-	struct udev_device *device;
-	if (!(device = udev_device_new_from_syspath(udev, syspath))) {
-		std::cerr << "xbat: '" << syspath << "': " << "Failed to load device" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
+	std::thread epoll_thread = std::thread([&]() {
+		struct udev *udev;
+		if (!(udev = udev_new())) {
+			std::cerr << "xbat: Failed to create udev context object" << std::endl;
+			std::exit(EXIT_FAILURE);
+		}
 
-	struct udev_monitor *monitor;
-	if (!(monitor = udev_monitor_new_from_netlink(udev, "udev"))) {
-		std::cerr << "xbat: Failed to create udev monitor" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
-	int monitor_fd = udev_monitor_get_fd(monitor);
+		const char *syspath = "/sys/class/power_supply/BAT1";
+		struct udev_device *device;
+		if (!(device = udev_device_new_from_syspath(udev, syspath))) {
+			std::cerr << "xbat: '" << syspath << "': " << "Failed to load device" << std::endl;
+			std::exit(EXIT_FAILURE);
+		}
 
-	if (udev_monitor_filter_add_match_subsystem_devtype(monitor, "power_supply", NULL) < 0) {
-		std::cerr << "xbat: Failed to add filter" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
+		struct udev_monitor *monitor;
+		if (!(monitor = udev_monitor_new_from_netlink(udev, "udev"))) {
+			std::cerr << "xbat: Failed to create udev monitor" << std::endl;
+			std::exit(EXIT_FAILURE);
+		}
+		int monitor_fd = udev_monitor_get_fd(monitor);
 
-	if (udev_monitor_enable_receiving(monitor) < 0) {
-		std::cerr << "xbat: Failed to enable monitor recieving" << std::endl;
-		std::exit(EXIT_FAILURE);
-	}
+		if (udev_monitor_filter_add_match_subsystem_devtype(monitor, "power_supply", NULL) < 0) {
+			std::cerr << "xbat: Failed to add filter" << std::endl;
+			std::exit(EXIT_FAILURE);
+		}
 
-	int ep;
-	if (!(ep = epoll_create(1))) {
-		std::perror("xbat");
-		std::exit(EXIT_FAILURE);
-	}
+		if (udev_monitor_enable_receiving(monitor) < 0) {
+			std::cerr << "xbat: Failed to enable monitor recieving" << std::endl;
+			std::exit(EXIT_FAILURE);
+		}
 
-	epoll_event event;
-	std::memset(&event, 0x00, sizeof(struct epoll_event));
-	event.events = EPOLLIN;
-	event.data.fd = monitor_fd;
+		int ep;
+		if (!(ep = epoll_create(1))) {
+			std::perror("xbat");
+			std::exit(EXIT_FAILURE);
+		}
+
+		epoll_event event;
+		std::memset(&event, 0x00, sizeof(struct epoll_event));
+		event.events = EPOLLIN;
+		event.data.fd = monitor_fd;
 	
-	if (epoll_ctl(ep, EPOLL_CTL_ADD, monitor_fd, &event) < 0) {
-		std::perror("xbat");
-		std::exit(EXIT_FAILURE);
-	}
+		if (epoll_ctl(ep, EPOLL_CTL_ADD, monitor_fd, &event) < 0) {
+			std::perror("xbat");
+			std::exit(EXIT_FAILURE);
+		}
 
-	for (;;) {
-		epoll_event event[1];
-		int cnt = epoll_wait(ep, event, 1, -1);
-		if (event[0].data.fd == monitor_fd && event[0].events & EPOLLIN) {
-			struct udev_device *dev = udev_monitor_receive_device(monitor);
+		for (;;) {
+			epoll_event event[1];
+			int cnt = epoll_wait(ep, event, 1, -1);
+			if (event[0].data.fd == monitor_fd && event[0].events & EPOLLIN) {
+				struct udev_device *dev = udev_monitor_receive_device(monitor);
 	
-			std::string status_str;
-			std::getline(status, status_str);
-			status.seekg(0);
-			std::string capacity_str;
-			std::getline(capacity, capacity_str);
-			capacity.seekg(0);
+				std::string status_str;
+				std::getline(status, status_str);
+				status.seekg(0);
+				std::string capacity_str;
+				std::getline(capacity, capacity_str);
+				capacity.seekg(0);
+				
+				mtx.lock();
+				draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
+				mtx.unlock();
 
-			draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
-			udev_device_unref(dev);
+				udev_device_unref(dev);
+			}
+		}
+	});
+
+	XSelectInput(display, window, ExposureMask | ResizeRedirectMask | PointerMotionMask | ButtonPressMask | ButtonReleaseMask);
+	XEvent event;
+
+	Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", true);
+	XSetWMProtocols(display, window, &wmDelete, 1);
+
+	bool clicked = false;
+	XWindowAttributes window_attribute;
+	XButtonEvent pointerstate;
+
+	bool running = true;
+	while (running) {
+		XNextEvent(display, &event);
+		switch (event.type) {
+			case Expose:
+				mtx.lock();
+				draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
+				mtx.unlock();
+				break;
+
+			case ResizeRequest:
+				mtx.lock();
+				draw(display, window, gc, font, leading_top_border, trailing_bottom_border, status_str, capacity_str);
+				mtx.unlock();
+				break;
+
+			case ButtonPress:
+				clicked = true;
+				XGetWindowAttributes(display, window, &window_attribute);
+				pointerstate = event.xbutton;
+				break;
+
+			case ButtonRelease:
+				clicked = false;
+				break;
+
+			case MotionNotify:
+				if (clicked) {
+					XMoveWindow(display, window, window_attribute.x + event.xbutton.x_root - pointerstate.x_root, window_attribute.y + event.xbutton.y_root - pointerstate.y_root);
+				}
+				break;
+
+			case ClientMessage:
+				running = false;
+				break;
+			default:
+				break;
 		}
 	}
 
