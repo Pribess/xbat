@@ -25,7 +25,7 @@ void draw(Display *display, Window window, GC gc, Font font, unsigned long leadi
 	XResizeWindow(display, window, WIDTH, HEIGHT);
 
 	XGCValues gcvalue;
-
+	
 	Window root;
 	int x;
 	int y;
@@ -81,7 +81,16 @@ int main(int argc, char *argv[]) {
 	unsigned long trailing_bottom_border = color.pixel;
 
 	Window root = XDefaultRootWindow(display);
-	Window window = XCreateSimpleWindow(display, root, X, Y, HEIGHT, WIDTH, 0, WhitePixel(display, 0), background);
+
+	int x;
+	int y;
+	unsigned int width;
+	unsigned int height;
+	unsigned int border_width;
+	unsigned int depth;
+	XGetGeometry(display, root, &root, &x, &y, &width, &height, &border_width, &depth);
+
+	Window window = XCreateSimpleWindow(display, root, width - WIDTH, 0, HEIGHT, WIDTH, 0, WhitePixel(display, 0), background);
 
 	XSetWindowAttributes attribute;
 	attribute.override_redirect = true;
